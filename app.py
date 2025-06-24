@@ -8,31 +8,39 @@ import plotly.express as px
 
 st.set_page_config(layout="wide")
 
-# Rutas
+# --------- RUTAS ---------
 PORTFOLIO_PATH = os.path.join("Data", "CSyRacional.csv")
 CACHE_PATH = os.path.join("Data", "cached_data.csv")
 
-# Autorefresco cada 5 minutos (300000 ms)
+# --------- AUTOREFRESCO cada 5 minutos ---------
 st_autorefresh(interval=300000, limit=None, key="datarefresh")
 
-# Función para colorear positivos y negativos
+# --------- BOTÓN REFRESCAR ---------
+if st.button("🔄 Refrescar datos"):
+    st.cache_data.clear()
+    st.experimental_rerun()
+
+# --------- HORA ÚLTIMA ACTUALIZACIÓN ---------
+st.write("Última actualización:", datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+
+# --------- FUNCIONES ---------
 def highlight_positive_negative(val):
     if isinstance(val, (int, float)):
         color = 'green' if val > 0 else 'red' if val < 0 else 'black'
         return f'color: {color}'
     return ''
 
-# Función de formato europeo segura
 def format_eur_safe(x):
     try:
         return "{:,.2f}".format(float(x)).replace(",", "X").replace(".", ",").replace("X", ".")
     except (ValueError, TypeError):
         return x
 
-# Cargar portafolio base y cache
-if os.path.exists(PORTFOLIO_PATH) and os.path.exists(CACHE_PATH):
-    df = pd.read_csv(PORTFOLIO_PATH)
-    cache_df = pd.read_csv(CACHE_PATH)
+# --------- FUNCIÓN CACHEADA PARA MERGE Y CÁLCULOS ---------
+@st.cache_data(show_spinner="Cargando datos del portafolio...")
+def cargar_datos_y_procesar(portfolio_path, cache_path):
+    df = pd.read_csv(portfolio_path)
+    cache_df = pd.read_csv(cache_path)
     merged_df = pd.merge(df, cache_df, on='Symbol', how='left')
 
     # Cálculos dinámicos
@@ -42,6 +50,11 @@ if os.path.exists(PORTFOLIO_PATH) and os.path.exists(CACHE_PATH):
     merged_df['Gain/Loss %'] = (merged_df['Gain/Loss $'] / merged_df['Cost Basis']) * 100
     merged_df['Day Change %'] = (merged_df['Price'] - merged_df['Previous Close']) / merged_df['Previous Close'] * 100
     merged_df['Day Change $'] = merged_df['Quantity'] * (merged_df['Price'] - merged_df['Previous Close'])
+    return merged_df
+
+# --------- DASHBOARD ---------
+if os.path.exists(PORTFOLIO_PATH) and os.path.exists(CACHE_PATH):
+    merged_df = cargar_datos_y_procesar(PORTFOLIO_PATH, CACHE_PATH)
 
     total_market_value = merged_df['Market Value'].sum()
     total_cost_basis = merged_df['Cost Basis'].sum()
