@@ -1,9 +1,5 @@
 streamlit
 pandas
+python-dateutil
 streamlit-autorefresh
-os
-datetime
-dateutil.tz
-streamlit_autorefresh
-plotly.express
-streamlit.components.v1
+plotly
