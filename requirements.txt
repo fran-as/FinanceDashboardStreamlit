@@ -1,5 +1,4 @@
 streamlit
 pandas
-python-dateutil
+matplotlib
 streamlit-autorefresh
-plotly

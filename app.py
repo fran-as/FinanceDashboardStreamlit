@@ -1,10 +1,9 @@
 import streamlit as st
 import pandas as pd
 import os
+import matplotlib.pyplot as plt
 from datetime import datetime
-from dateutil.tz import tzlocal
 from streamlit_autorefresh import st_autorefresh
-import plotly.express as px
 import streamlit.components.v1 as components
 
 st.set_page_config(layout="wide")
@@ -14,14 +13,13 @@ PORTFOLIO_PATH = os.path.join("Data", "CSyRacional.csv")
 CACHE_PATH     = os.path.join("Data", "cached_data.csv")
 
 # --------- AUTOREFRESH CADA 5 MINUTOS ---------
-# devuelve 0 la primera vez, >0 en cada recarga automática
 refresh_count = st_autorefresh(interval=300_000, limit=None, key="datarefresh")
 
 # --------- LIMPIAR CACHÉ EN AUTORELOAD O BOTÓN ---------
 if refresh_count > 0 or st.button("🔄 Refrescar datos"):
     st.cache_data.clear()
 
-# --------- HORA DE ÚLTIMA ACTUALIZACIÓN (JS en cliente) ---------
+# --------- HORA DE ÚLTIMA ACTUALIZACIÓN (CLIENTE) ---------
 components.html(
     """
     <div style="font-size:1.1em; margin-bottom:1em;">
@@ -54,7 +52,7 @@ def format_eur_safe(x):
     except:
         return x
 
-# --------- CARGA Y PROCESADO (cacheado según timestamp de archivos) ---------
+# --------- CARGA Y PROCESADO (cacheado según mtime de archivos) ---------
 @st.cache_data(show_spinner="Cargando datos del portafolio…")
 def cargar_datos_y_procesar(portfolio_path, cache_path, p_mtime, c_mtime):
     df       = pd.read_csv(portfolio_path)
@@ -71,8 +69,9 @@ def cargar_datos_y_procesar(portfolio_path, cache_path, p_mtime, c_mtime):
                               (merged['Price'] - merged['Previous Close'])
     return merged
 
+# --------- EJECUCIÓN DEL DASHBOARD ---------
 if os.path.exists(PORTFOLIO_PATH) and os.path.exists(CACHE_PATH):
-    # pasar también las mtime para invalidar cache si cambian los CSV
+    # invalidación de cache si cambian los archivos
     p_mtime = os.path.getmtime(PORTFOLIO_PATH)
     c_mtime = os.path.getmtime(CACHE_PATH)
     merged_df = cargar_datos_y_procesar(PORTFOLIO_PATH, CACHE_PATH, p_mtime, c_mtime)
@@ -90,12 +89,12 @@ if os.path.exists(PORTFOLIO_PATH) and os.path.exists(CACHE_PATH):
     # 💼 Account Summary
     st.markdown("## 💼 Account Summary")
     c1, c2, c3, c4, c5, c6 = st.columns(6)
-    c1.metric("Total Accounts Value",   f"$ {tav:,.2f}")
+    c1.metric("Total Accounts Value",     f"$ {tav:,.2f}")
     c2.metric("Total Cash & Cash Invest", f"$ {cash:,.2f}")
-    c3.metric("Total Market Value",     f"$ {tmv:,.2f}")
-    c4.metric("Total Day Change",       f"$ {tdc:+,.2f}", f"{tdcp:+.2f}%")
-    c5.metric("Total Cost Basis",       f"$ {tcb:,.2f}")
-    c6.metric("Total Gain/Loss",        f"$ {tgl:+,.2f}", f"{tglp:+.2f}%")
+    c3.metric("Total Market Value",       f"$ {tmv:,.2f}")
+    c4.metric("Total Day Change",         f"$ {tdc:+,.2f}", f"{tdcp:+.2f}%")
+    c5.metric("Total Cost Basis",         f"$ {tcb:,.2f}")
+    c6.metric("Total Gain/Loss",          f"$ {tgl:+,.2f}", f"{tglp:+.2f}%")
 
     # 📊 Equities - Position details
     st.markdown("## 📊 Equities - Position details")
@@ -122,7 +121,7 @@ if os.path.exists(PORTFOLIO_PATH) and os.path.exists(CACHE_PATH):
         use_container_width=True, hide_index=True
     )
 
-    # 📈 Top 5 Performers (Total Gain %)
+    # 📈 Top/Bottom performers & Day movers
     st.markdown("### 📈 Top 5 Performers (Total Gain %)")
     tp = merged_df.sort_values('Gain/Loss %', ascending=False).head(5)
     st.dataframe(
@@ -131,7 +130,6 @@ if os.path.exists(PORTFOLIO_PATH) and os.path.exists(CACHE_PATH):
         use_container_width=True, hide_index=True
     )
 
-    # 📉 Bottom 5 Performers (Total Gain %)
     st.markdown("### 📉 Bottom 5 Performers (Total Gain %)")
     bp = merged_df.sort_values('Gain/Loss %').head(5)
     st.dataframe(
@@ -140,7 +138,6 @@ if os.path.exists(PORTFOLIO_PATH) and os.path.exists(CACHE_PATH):
         use_container_width=True, hide_index=True
     )
 
-    # 📈 Top 5 Gainers (Day Change %)
     st.markdown("### 📈 Top 5 Gainers (Day Change %)")
     tg = merged_df.sort_values('Day Change %', ascending=False).head(5)
     st.dataframe(
@@ -149,7 +146,6 @@ if os.path.exists(PORTFOLIO_PATH) and os.path.exists(CACHE_PATH):
         use_container_width=True, hide_index=True
     )
 
-    # 📉 Top 5 Losers (Day Change %)
     st.markdown("### 📉 Top 5 Losers (Day Change %)")
     tl = merged_df.sort_values('Day Change %').head(5)
     st.dataframe(
@@ -158,12 +154,18 @@ if os.path.exists(PORTFOLIO_PATH) and os.path.exists(CACHE_PATH):
         use_container_width=True, hide_index=True
     )
 
-    # 📊 Exposure by Sector (Pie Chart)
+    # 📊 Exposure by Sector (Matplotlib Pie)
     st.markdown("### 📊 Exposure by Sector")
     sector_data = merged_df.groupby('Sector', as_index=False)['Market Value'].sum()
-    fig = px.pie(sector_data, names='Sector', values='Market Value',
-                 title='Portfolio Exposure by Sector')
-    st.plotly_chart(fig, use_container_width=True)
+    fig, ax = plt.subplots()
+    ax.pie(
+        sector_data['Market Value'],
+        labels=sector_data['Sector'],
+        autopct='%1.1f%%',
+        startangle=90
+    )
+    ax.axis('equal')
+    st.pyplot(fig)
 
 else:
     st.warning("❗ Asegurate de tener CSyRacional.csv y cached_data.csv en la carpeta Data.")
