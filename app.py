@@ -15,8 +15,6 @@ CACHE_PATH     = os.path.join("Data", "cached_data.csv")
 
 # --------- AUTOREFRESH CADA 5 MINUTOS ---------
 refresh_count = st_autorefresh(interval=300_000, limit=None, key="datarefresh")
-
-# --------- LIMPIAR CACHÉ EN AUTORELOAD O BOTÓN ---------
 if refresh_count > 0 or st.button("🔄 Refrescar datos"):
     st.cache_data.clear()
 
@@ -37,7 +35,7 @@ components.html(
     height=70,
 )
 
-# --------- UTILS ---------
+# --------- UTILITIES ---------
 def highlight_positive_negative(val):
     if isinstance(val, (int, float)):
         return f"color: {'green' if val>0 else 'red' if val<0 else 'black'}"
@@ -74,7 +72,7 @@ def load_static(portfolio_path, cache_path):
     c_df = pd.read_csv(cache_path).drop(columns=["Price","Previous Close"], errors="ignore")
     return pd.merge(p_df, c_df, on="Symbol", how="left")
 
-# --------- EJECUCIÓN ---------
+# --------- EJECUCIÓN PRINCIPAL ---------
 if os.path.exists(PORTFOLIO_PATH) and os.path.exists(CACHE_PATH):
     static_df = load_static(PORTFOLIO_PATH, CACHE_PATH)
     yahoo_df  = fetch_yahoo(static_df["Symbol"].tolist())
@@ -88,7 +86,7 @@ if os.path.exists(PORTFOLIO_PATH) and os.path.exists(CACHE_PATH):
     df["Day Change %"] = (df["Price"] - df["Previous Close"]) / df["Previous Close"] * 100
     df["Day Change $"] = df["Quantity"] * (df["Price"] - df["Previous Close"])
 
-    # Totales
+    # Totales y % de cuenta
     tmv  = df["Market Value"].sum()
     tcb  = df["Cost Basis"].sum()
     tgl  = df["Gain/Loss $"].sum()
@@ -97,8 +95,6 @@ if os.path.exists(PORTFOLIO_PATH) and os.path.exists(CACHE_PATH):
     tdcp = (tdc / (tmv - tdc) * 100) if (tmv - tdc) else 0
     cash = 5109.34
     tav  = tmv + cash
-
-    # % of Account
     df["% of Acct"] = df["Market Value"] / tav * 100
 
     # 💼 Account Summary
@@ -111,76 +107,46 @@ if os.path.exists(PORTFOLIO_PATH) and os.path.exists(CACHE_PATH):
     c5.metric("Total Cost Basis",       f"$ {tcb:,.2f}")
     c6.metric("Total Gain/Loss",        f"$ {tgl:+,.2f}", f"{tglp:+.2f}%")
 
-    # 📊 Equities - Position details
+    # 📊 Position details
     st.markdown("## 📊 Equities - Position details")
-    display = ["Symbol","Description","Quantity","Cost/Share","Price","Previous Close",
-               "Day Change %","Day Change $","P/E","Market Value","Gain/Loss %","% of Acct"]
-    styled = df[display].style.map(highlight_positive_negative,
-                                   subset=["Day Change %","Day Change $","Gain/Loss %"])
-    nums   = df[display].select_dtypes("number").columns
-    st.dataframe(styled.format(format_eur_safe, subset=nums),
-                 use_container_width=True, hide_index=True)
-
-    # 🏆 Top 5 Holdings by Market Value (Mejores)
-    st.markdown("### 🏆 Top 5 Holdings by Market Value (Mejores)")
-    top5 = df.nlargest(5, "Market Value")
-    cols = ["Symbol","Description","Price","Market Value","Day Change $","Day Change %","Gain/Loss %","% of Acct"]
+    base_cols = ["Symbol","Description","Quantity","Cost/Share","Price","Previous Close",
+                 "Day Change %","Day Change $","P/E","Market Value","Gain/Loss %","% of Acct"]
+    styled = df[base_cols].style.map(
+        highlight_positive_negative,
+        subset=["Day Change %","Day Change $","Gain/Loss %"]
+    )
+    num_cols = df[base_cols].select_dtypes("number").columns
     st.dataframe(
-        top5[cols]
-          .rename(columns={
-              "Market Value": "Mkt Val",
-              "Day Change $": "Price Chng $",
-              "Day Change %": "Price Chng %"
-          })
-          .style.format(format_eur_safe, subset=cols[2:]),
-        use_container_width=True,
-        hide_index=True
+        styled.format(format_eur_safe, subset=num_cols),
+        use_container_width=True, hide_index=True
     )
 
-    # 📉 Top 5 Holdings by Market Value (Peores)
-    st.markdown("### 📉 Top 5 Holdings by Market Value (Peores)")
-    bottom5 = df.nsmallest(5, "Market Value")
-    st.dataframe(
-        bottom5[cols]
-          .rename(columns={
-              "Market Value": "Mkt Val",
-              "Day Change $": "Price Chng $",
-              "Day Change %": "Price Chng %"
-          })
-          .style.format(format_eur_safe, subset=cols[2:]),
-        use_container_width=True,
-        hide_index=True
-    )
+    # Función para mostrar tablas Top/Bottom
+    def show_table(sub_df, title):
+        st.markdown(f"### {title}")
+        # Renombrar columnas según requerimiento
+        renamed = sub_df.rename(columns={
+            "Market Value": "Mkt Val",
+            "Day Change $": "Price Chng $",
+            "Day Change %": "Price Chng %"
+        })
+        table_cols = ["Symbol","Description","Price","Mkt Val","Price Chng $","Price Chng %","Gain/Loss %","% of Acct"]
+        styled_tbl = renamed[table_cols].style.map(
+            highlight_positive_negative,
+            subset=["Price Chng %","Price Chng $","Gain/Loss %"]
+        )
+        st.dataframe(
+            styled_tbl.format(format_eur_safe, subset=table_cols[2:]),
+            use_container_width=True, hide_index=True
+        )
 
-    # 📈 Top 5 Gainers (Day Change %)
-    st.markdown("### 📈 Top 5 Gainers (Day Change %)")
-    top_day = df.nlargest(5, "Day Change %")
-    st.dataframe(
-        top_day[cols]
-          .rename(columns={
-              "Market Value": "Mkt Val",
-              "Day Change $": "Price Chng $",
-              "Day Change %": "Price Chng %"
-          })
-          .style.format(format_eur_safe, subset=cols[2:]),
-        use_container_width=True,
-        hide_index=True
-    )
+    # 🏆 Top 5 Holdings by Market Value (Mejores y Peores)
+    show_table(df.nlargest(5, "Market Value"), "🏆 Top 5 Holdings by Market Value (Mejores)")
+    show_table(df.nsmallest(5, "Market Value"), "📉 Top 5 Holdings by Market Value (Peores)")
 
-    # 📉 Top 5 Losers (Day Change %)
-    st.markdown("### 📉 Top 5 Losers (Day Change %)")
-    bottom_day = df.nsmallest(5, "Day Change %")
-    st.dataframe(
-        bottom_day[cols]
-          .rename(columns={
-              "Market Value": "Mkt Val",
-              "Day Change $": "Price Chng $",
-              "Day Change %": "Price Chng %"
-          })
-          .style.format(format_eur_safe, subset=cols[2:]),
-        use_container_width=True,
-        hide_index=True
-    )
+    # 📈 Top/Bottom 5 por Day Change %
+    show_table(df.nlargest(5, "Day Change %"), "📈 Top 5 by Day Change %")
+    show_table(df.nsmallest(5, "Day Change %"), "📉 Bottom 5 by Day Change %")
 
     # 📊 Exposure by Sector (Pie Chart)
     st.markdown("### 📊 Exposure by Sector")
