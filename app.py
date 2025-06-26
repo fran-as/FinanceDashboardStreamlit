@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import yfinance as yf
 import os
 import matplotlib.pyplot as plt
 from datetime import datetime
@@ -8,18 +9,18 @@ import streamlit.components.v1 as components
 
 st.set_page_config(layout="wide")
 
-# --------- RUTAS ---------
+# Rutas
 PORTFOLIO_PATH = os.path.join("Data", "CSyRacional.csv")
 CACHE_PATH     = os.path.join("Data", "cached_data.csv")
 
-# --------- AUTOREFRESH CADA 5 MINUTOS ---------
+# Autorefresh cada 5 minutos
 refresh_count = st_autorefresh(interval=300_000, limit=None, key="datarefresh")
 
-# --------- LIMPIAR CACHÉ EN AUTORELOAD O BOTÓN ---------
+# Botón de recarga manual
 if refresh_count > 0 or st.button("🔄 Refrescar datos"):
     st.cache_data.clear()
 
-# --------- HORA DE ÚLTIMA ACTUALIZACIÓN (CLIENTE) ---------
+# Mostrar hora local del cliente
 components.html(
     """
     <div style="font-size:1.1em; margin-bottom:1em;">
@@ -36,136 +37,99 @@ components.html(
     height=70,
 )
 
-# --------- FUNCIONES AUXILIARES ---------
+# Auxiliares
 def highlight_positive_negative(val):
     if isinstance(val, (int, float)):
-        color = 'green' if val > 0 else 'red' if val < 0 else 'black'
-        return f'color: {color}'
-    return ''
+        return f"color: {'green' if val>0 else 'red' if val<0 else 'black'}"
+    return ""
 
 def format_eur_safe(x):
     try:
-        return "{:,.2f}".format(float(x)) \
-                 .replace(",", "X") \
-                 .replace(".", ",") \
-                 .replace("X", ".")
+        return "{:,.2f}".format(float(x)).replace(",", "X").replace(".", ",").replace("X", ".")
     except:
         return x
 
-# --------- CARGA Y PROCESADO (cacheado según mtime de archivos) ---------
-@st.cache_data(show_spinner="Cargando datos del portafolio…")
-def cargar_datos_y_procesar(portfolio_path, cache_path, p_mtime, c_mtime):
-    df       = pd.read_csv(portfolio_path)
-    cache_df = pd.read_csv(cache_path)
-    merged   = pd.merge(df, cache_df, on='Symbol', how='left')
+# Fetch dinámico desde Yahoo
+@st.cache_data(show_spinner="📡 Obteniendo precios de Yahoo…")
+def fetch_yahoo(symbols):
+    rows = []
+    for sym in symbols:
+        try:
+            hist = yf.Ticker(sym).history(period="2d")
+            price = hist["Close"][-1]
+            prev  = hist["Close"][-2]
+        except Exception:
+            price = None
+            prev  = None
+        rows.append({"Symbol": sym, "Price": price, "Previous Close": prev})
+    return pd.DataFrame(rows)
 
-    merged['Market Value'] = merged['Quantity'] * merged['Price']
-    merged['Cost Basis']    = merged['Quantity'] * merged['Cost/Share']
-    merged['Gain/Loss $']   = merged['Market Value'] - merged['Cost Basis']
-    merged['Gain/Loss %']   = (merged['Gain/Loss $'] / merged['Cost Basis']) * 100
-    merged['Day Change %']  = (merged['Price'] - merged['Previous Close']) \
-                              / merged['Previous Close'] * 100
-    merged['Day Change $']  = merged['Quantity'] * \
-                              (merged['Price'] - merged['Previous Close'])
-    return merged
+# Carga estática y merge
+@st.cache_data(show_spinner="📥 Cargando datos estáticos…")
+def load_static(portfolio_path, cache_path):
+    p_df = pd.read_csv(portfolio_path)          # Symbol, Description, Quantity, Cost/Share, Sector…
+    c_df = pd.read_csv(cache_path).drop(columns=["Price","Previous Close"], errors="ignore")
+    return pd.merge(p_df, c_df, on="Symbol", how="left")
 
-# --------- EJECUCIÓN DEL DASHBOARD ---------
+# Ejecución
 if os.path.exists(PORTFOLIO_PATH) and os.path.exists(CACHE_PATH):
-    # invalidación de cache si cambian los archivos
-    p_mtime = os.path.getmtime(PORTFOLIO_PATH)
-    c_mtime = os.path.getmtime(CACHE_PATH)
-    merged_df = cargar_datos_y_procesar(PORTFOLIO_PATH, CACHE_PATH, p_mtime, c_mtime)
+    static_df = load_static(PORTFOLIO_PATH, CACHE_PATH)
+    yahoo_df  = fetch_yahoo(static_df["Symbol"].tolist())
+    df = pd.merge(static_df, yahoo_df, on="Symbol", how="left")
 
-    # Totales y métricas
-    tmv  = merged_df['Market Value'].sum()
-    tcb  = merged_df['Cost Basis'].sum()
-    tgl  = merged_df['Gain/Loss $'].sum()
+    # Cálculos dinámicos
+    df["Market Value"] = df["Quantity"] * df["Price"]
+    df["Cost Basis"]   = df["Quantity"] * df["Cost/Share"]
+    df["Gain/Loss $"]  = df["Market Value"] - df["Cost Basis"]
+    df["Gain/Loss %"]  = df["Gain/Loss $"] / df["Cost Basis"] * 100
+    df["Day Change %"] = (df["Price"] - df["Previous Close"]) / df["Previous Close"] * 100
+    df["Day Change $"] = df["Quantity"] * (df["Price"] - df["Previous Close"])
+
+    # Totales
+    tmv  = df["Market Value"].sum()
+    tcb  = df["Cost Basis"].sum()
+    tgl  = df["Gain/Loss $"].sum()
     tglp = (tgl / tcb * 100) if tcb else 0
-    tdc  = merged_df['Day Change $'].sum()
+    tdc  = df["Day Change $"].sum()
     tdcp = (tdc / (tmv - tdc) * 100) if (tmv - tdc) else 0
     cash = 5109.34
     tav  = tmv + cash
 
-    # 💼 Account Summary
+    # Account Summary
     st.markdown("## 💼 Account Summary")
     c1, c2, c3, c4, c5, c6 = st.columns(6)
-    c1.metric("Total Accounts Value",     f"$ {tav:,.2f}")
+    c1.metric("Total Accounts Value",   f"$ {tav:,.2f}")
     c2.metric("Total Cash & Cash Invest", f"$ {cash:,.2f}")
-    c3.metric("Total Market Value",       f"$ {tmv:,.2f}")
-    c4.metric("Total Day Change",         f"$ {tdc:+,.2f}", f"{tdcp:+.2f}%")
-    c5.metric("Total Cost Basis",         f"$ {tcb:,.2f}")
-    c6.metric("Total Gain/Loss",          f"$ {tgl:+,.2f}", f"{tglp:+.2f}%")
+    c3.metric("Total Market Value",     f"$ {tmv:,.2f}")
+    c4.metric("Total Day Change",       f"$ {tdc:+,.2f}", f"{tdcp:+.2f}%")
+    c5.metric("Total Cost Basis",       f"$ {tcb:,.2f}")
+    c6.metric("Total Gain/Loss",        f"$ {tgl:+,.2f}", f"{tglp:+.2f}%")
 
-    # 📊 Equities - Position details
+    # Position details
     st.markdown("## 📊 Equities - Position details")
-    cols = [
-        'Symbol','Description','Quantity','Cost/Share','Price','Previous Close',
-        'Day Change %','Day Change $','P/E','Market Value','Gain/Loss $','Gain/Loss %'
-    ]
-    styled = merged_df[cols].style.map(
-        highlight_positive_negative,
-        subset=['Day Change %','Day Change $','Gain/Loss $','Gain/Loss %']
-    )
-    num_cols = merged_df[cols].select_dtypes(include='number').columns
-    st.dataframe(
-        styled.format(format_eur_safe, subset=num_cols),
-        use_container_width=True, hide_index=True
-    )
+    display = ["Symbol","Description","Quantity","Cost/Share","Price","Previous Close",
+               "Day Change %","Day Change $","P/E","Market Value","Gain/Loss $","Gain/Loss %"]
+    styled = df[display].style.map(highlight_positive_negative,
+                                   subset=["Day Change %","Day Change $","Gain/Loss $","Gain/Loss %"])
+    nums   = df[display].select_dtypes("number").columns
+    st.dataframe(styled.format(format_eur_safe, subset=nums),
+                 use_container_width=True, hide_index=True)
 
-    # 🏆 Top 5 Holdings by Market Value
+    # Top 5 por Market Value
     st.markdown("### 🏆 Top 5 Holdings by Market Value")
-    top5 = merged_df.sort_values('Market Value', ascending=False).head(5)
-    top5_cols = ['Symbol','Description','Quantity','Price','Market Value','Cost Basis','Gain/Loss %']
-    st.dataframe(
-        top5.style.format(format_eur_safe, subset=top5[top5_cols].select_dtypes(include='number').columns),
-        use_container_width=True, hide_index=True
-    )
+    top5 = df.nlargest(5, "Market Value")
+    cols = ["Symbol","Description","Quantity","Price","Market Value","Cost Basis","Gain/Loss %"]
+    st.dataframe(top5[cols].style.format(format_eur_safe,
+                 subset=top5[cols].select_dtypes("number").columns),
+                 use_container_width=True, hide_index=True)
 
-    # 📈 Top/Bottom performers & Day movers
-    st.markdown("### 📈 Top 5 Performers (Total Gain %)")
-    tp = merged_df.sort_values('Gain/Loss %', ascending=False).head(5)
-    st.dataframe(
-        tp[['Symbol','Description','Price','Gain/Loss %']]
-          .style.format(format_eur_safe, subset=['Price','Gain/Loss %']),
-        use_container_width=True, hide_index=True
-    )
-
-    st.markdown("### 📉 Bottom 5 Performers (Total Gain %)")
-    bp = merged_df.sort_values('Gain/Loss %').head(5)
-    st.dataframe(
-        bp[['Symbol','Description','Price','Gain/Loss %']]
-          .style.format(format_eur_safe, subset=['Price','Gain/Loss %']),
-        use_container_width=True, hide_index=True
-    )
-
-    st.markdown("### 📈 Top 5 Gainers (Day Change %)")
-    tg = merged_df.sort_values('Day Change %', ascending=False).head(5)
-    st.dataframe(
-        tg[['Symbol','Description','Day Change %','Price']]
-          .style.format(format_eur_safe, subset=['Day Change %','Price']),
-        use_container_width=True, hide_index=True
-    )
-
-    st.markdown("### 📉 Top 5 Losers (Day Change %)")
-    tl = merged_df.sort_values('Day Change %').head(5)
-    st.dataframe(
-        tl[['Symbol','Description','Day Change %','Price']]
-          .style.format(format_eur_safe, subset=['Day Change %','Price']),
-        use_container_width=True, hide_index=True
-    )
-
-    # 📊 Exposure by Sector (Matplotlib Pie)
+    # Pie Chart por Sector
     st.markdown("### 📊 Exposure by Sector")
-    sector_data = merged_df.groupby('Sector', as_index=False)['Market Value'].sum()
+    sector_sum = df.groupby("Sector", as_index=False)["Market Value"].sum()
     fig, ax = plt.subplots()
-    ax.pie(
-        sector_data['Market Value'],
-        labels=sector_data['Sector'],
-        autopct='%1.1f%%',
-        startangle=90
-    )
-    ax.axis('equal')
+    ax.pie(sector_sum["Market Value"], labels=sector_sum["Sector"], autopct="%1.1f%%", startangle=90)
+    ax.axis("equal")
     st.pyplot(fig)
 
 else:
-    st.warning("❗ Asegurate de tener CSyRacional.csv y cached_data.csv en la carpeta Data.")
+    st.warning("❗ Asegúrate de tener ambos CSV en la carpeta Data.")
