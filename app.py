@@ -37,7 +37,7 @@ components.html(
     height=70,
 )
 
-# --------- AUXILIARES ---------
+# --------- UTILS ---------
 def highlight_positive_negative(val):
     if isinstance(val, (int, float)):
         return f"color: {'green' if val>0 else 'red' if val<0 else 'black'}"
@@ -98,6 +98,9 @@ if os.path.exists(PORTFOLIO_PATH) and os.path.exists(CACHE_PATH):
     cash = 5109.34
     tav  = tmv + cash
 
+    # % of Account
+    df["% of Acct"] = df["Market Value"] / tav * 100
+
     # 💼 Account Summary
     st.markdown("## 💼 Account Summary")
     c1, c2, c3, c4, c5, c6 = st.columns(6)
@@ -111,9 +114,9 @@ if os.path.exists(PORTFOLIO_PATH) and os.path.exists(CACHE_PATH):
     # 📊 Equities - Position details
     st.markdown("## 📊 Equities - Position details")
     display = ["Symbol","Description","Quantity","Cost/Share","Price","Previous Close",
-               "Day Change %","Day Change $","P/E","Market Value","Gain/Loss $","Gain/Loss %"]
+               "Day Change %","Day Change $","P/E","Market Value","Gain/Loss %","% of Acct"]
     styled = df[display].style.map(highlight_positive_negative,
-                                   subset=["Day Change %","Day Change $","Gain/Loss $","Gain/Loss %"])
+                                   subset=["Day Change %","Day Change $","Gain/Loss %"])
     nums   = df[display].select_dtypes("number").columns
     st.dataframe(styled.format(format_eur_safe, subset=nums),
                  use_container_width=True, hide_index=True)
@@ -121,37 +124,70 @@ if os.path.exists(PORTFOLIO_PATH) and os.path.exists(CACHE_PATH):
     # 🏆 Top 5 Holdings by Market Value (Mejores)
     st.markdown("### 🏆 Top 5 Holdings by Market Value (Mejores)")
     top5 = df.nlargest(5, "Market Value")
-    fig1 = px.bar(top5, x="Symbol", y="Market Value", text="Market Value",
-                  title="Top 5 Holdings by Market Value")
-    st.plotly_chart(fig1, use_container_width=True)
+    cols = ["Symbol","Description","Price","Market Value","Day Change $","Day Change %","Gain/Loss %","% of Acct"]
+    st.dataframe(
+        top5[cols]
+          .rename(columns={
+              "Market Value": "Mkt Val",
+              "Day Change $": "Price Chng $",
+              "Day Change %": "Price Chng %"
+          })
+          .style.format(format_eur_safe, subset=cols[2:]),
+        use_container_width=True,
+        hide_index=True
+    )
 
     # 📉 Top 5 Holdings by Market Value (Peores)
     st.markdown("### 📉 Top 5 Holdings by Market Value (Peores)")
     bottom5 = df.nsmallest(5, "Market Value")
-    fig2 = px.bar(bottom5, x="Symbol", y="Market Value", text="Market Value",
-                  title="Bottom 5 Holdings by Market Value")
-    st.plotly_chart(fig2, use_container_width=True)
+    st.dataframe(
+        bottom5[cols]
+          .rename(columns={
+              "Market Value": "Mkt Val",
+              "Day Change $": "Price Chng $",
+              "Day Change %": "Price Chng %"
+          })
+          .style.format(format_eur_safe, subset=cols[2:]),
+        use_container_width=True,
+        hide_index=True
+    )
 
     # 📈 Top 5 Gainers (Day Change %)
     st.markdown("### 📈 Top 5 Gainers (Day Change %)")
     top_day = df.nlargest(5, "Day Change %")
-    fig3 = px.bar(top_day, x="Symbol", y="Day Change %", text="Day Change %",
-                  title="Top 5 Gainers by Day Change %")
-    st.plotly_chart(fig3, use_container_width=True)
+    st.dataframe(
+        top_day[cols]
+          .rename(columns={
+              "Market Value": "Mkt Val",
+              "Day Change $": "Price Chng $",
+              "Day Change %": "Price Chng %"
+          })
+          .style.format(format_eur_safe, subset=cols[2:]),
+        use_container_width=True,
+        hide_index=True
+    )
 
     # 📉 Top 5 Losers (Day Change %)
     st.markdown("### 📉 Top 5 Losers (Day Change %)")
     bottom_day = df.nsmallest(5, "Day Change %")
-    fig4 = px.bar(bottom_day, x="Symbol", y="Day Change %", text="Day Change %",
-                  title="Bottom 5 Losers by Day Change %")
-    st.plotly_chart(fig4, use_container_width=True)
+    st.dataframe(
+        bottom_day[cols]
+          .rename(columns={
+              "Market Value": "Mkt Val",
+              "Day Change $": "Price Chng $",
+              "Day Change %": "Price Chng %"
+          })
+          .style.format(format_eur_safe, subset=cols[2:]),
+        use_container_width=True,
+        hide_index=True
+    )
 
     # 📊 Exposure by Sector (Pie Chart)
     st.markdown("### 📊 Exposure by Sector")
     sector_sum = df.groupby("Sector", as_index=False)["Market Value"].sum()
-    fig5 = px.pie(sector_sum, names="Sector", values="Market Value",
-                  title="Portfolio Exposure by Sector")
-    st.plotly_chart(fig5, use_container_width=True)
+    fig = px.pie(sector_sum, names="Sector", values="Market Value",
+                 title="Portfolio Exposure by Sector")
+    st.plotly_chart(fig, use_container_width=True)
 
 else:
     st.warning("❗ Asegúrate de tener ambos CSV en la carpeta Data.")
