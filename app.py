@@ -93,7 +93,7 @@ if os.path.exists(PORTFOLIO_PATH) and os.path.exists(CACHE_PATH):
     tglp = (tgl / tcb * 100) if tcb else 0
     tdc  = df["Day Change $"].sum()
     tdcp = (tdc / (tmv - tdc) * 100) if (tmv - tdc) else 0
-    cash = 5109.34
+    cash = 4151.72
     tav  = tmv + cash
     df["% of Acct"] = df["Market Value"] / tav * 100
 
