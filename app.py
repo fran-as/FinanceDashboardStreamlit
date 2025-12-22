@@ -35,78 +35,70 @@ def format_eur_safe(x):
     except Exception:
         return x
 
-# --------- YAHOO FINANCE ---------
+# --------- CARGA YAHOO FINANCE ---------
 def fetch_yahoo(symbols):
     rows = []
     for sym in symbols:
         try:
             ticker = yf.Ticker(sym)
             hist = ticker.history(period="2d")
+            info = ticker.info
             price = hist["Close"][-1]
             prev  = hist["Close"][-2]
+            pe_ratio = info.get("trailingPE")
+            long_name = info.get("longName", "")
         except Exception:
             price = None
             prev  = None
-        rows.append({"Symbol": sym, "Price": price, "Previous Close": prev})
+            pe_ratio = None
+            long_name = ""
+        rows.append({
+            "Symbol": sym,
+            "Price": price,
+            "Previous Close": prev,
+            "P/E": pe_ratio,
+            "Description": long_name
+        })
     return pd.DataFrame(rows)
 
-def enrich_with_yahoo_info(df):
-    descriptions = []
-    for sym, desc in zip(df["Symbol"], df["Description"]):
-        if pd.isna(desc) or str(desc).strip() == "":
-            try:
-                info = yf.Ticker(sym).info
-                long_name = info.get("longName", "")
-            except:
-                long_name = ""
-            descriptions.append(long_name)
-        else:
-            descriptions.append(desc)
-    df["Description"] = descriptions
-    return df
-
 # --------- CARGA ESTÁTICA Y MERGE ---------
-@st.cache_data(show_spinner="📥 Cargando datos estáticos…")
+@st.cache_data(show_spinner="📥 Cargando datos…")
 def load_static(portfolio_path, cache_path):
     p_df = pd.read_csv(portfolio_path)
 
+    # ✅ Renombrar columnas según estructura real
     rename_map = {
         "symbol": "Symbol",
         "description": "Description",
         "total_quantity": "Quantity",
         "avg_cost_per_share": "Cost/Share",
+        "total_cost_basis": "Cost Basis"
     }
     p_df = p_df.rename(columns=rename_map)
 
-    for col in ["Symbol", "Description", "Quantity", "Cost/Share"]:
-        if col not in p_df.columns:
-            p_df[col] = None
-
-    p_df["Quantity"] = pd.to_numeric(p_df["Quantity"], errors="coerce")
-    p_df["Cost/Share"] = pd.to_numeric(p_df["Cost/Share"], errors="coerce")
+    for col in ["Symbol", "Quantity", "Cost/Share"]:
+        p_df[col] = pd.to_numeric(p_df[col], errors="coerce")
     p_df["Symbol"] = p_df["Symbol"].astype(str).str.strip().str.upper()
 
+    # Cache opcional si existiera
     try:
         c_df = pd.read_csv(cache_path)
+        if "symbol" in c_df.columns and "Symbol" not in c_df.columns:
+            c_df = c_df.rename(columns={"symbol": "Symbol"})
+        c_df["Symbol"] = c_df["Symbol"].astype(str).str.strip().str.upper()
+        c_df = c_df.drop(columns=["Price", "Previous Close"], errors="ignore")
     except FileNotFoundError:
         c_df = pd.DataFrame(columns=["Symbol"])
 
-    if "symbol" in c_df.columns and "Symbol" not in c_df.columns:
-        c_df = c_df.rename(columns={"symbol": "Symbol"})
-    c_df["Symbol"] = c_df["Symbol"].astype(str).str.strip().str.upper()
-    c_df = c_df.drop(columns=["Price", "Previous Close"], errors="ignore")
-
     return pd.merge(p_df, c_df, on="Symbol", how="left")
 
-# --------- EJECUCIÓN PRINCIPAL ---------
+# --------- MAIN ---------
 if os.path.exists(PORTFOLIO_PATH):
     static_df = load_static(PORTFOLIO_PATH, CACHE_PATH)
-    yahoo_df  = fetch_yahoo(static_df["Symbol"].tolist())
+    yahoo_df = fetch_yahoo(static_df["Symbol"].tolist())
     df = pd.merge(static_df, yahoo_df, on="Symbol", how="left")
 
-    df = enrich_with_yahoo_info(df)
-
-    # Cálculos dinámicos
+    # Calcular dinámicos
     df["Market Value"] = df["Quantity"] * df["Price"]
     df["Cost Basis"]   = df["Quantity"] * df["Cost/Share"]
     df["Gain/Loss $"]  = df["Market Value"] - df["Cost Basis"]
@@ -114,14 +106,14 @@ if os.path.exists(PORTFOLIO_PATH):
     df["Day Change %"] = (df["Price"] - df["Previous Close"]) / df["Previous Close"] * 100
     df["Day Change $"] = df["Quantity"] * (df["Price"] - df["Previous Close"])
 
-    # Totales y % de cuenta
+    # Totales
     tmv  = df["Market Value"].sum()
     tcb  = df["Cost Basis"].sum()
     tgl  = df["Gain/Loss $"].sum()
     tglp = (tgl / tcb * 100) if tcb else 0
     tdc  = df["Day Change $"].sum()
     tdcp = (tdc / (tmv - tdc) * 100) if (tmv - tdc) else 0
-    cash = 2519.36
+    cash = 2519.36  # hardcoded cash value
     tav  = tmv + cash
     df["% of Acct"] = df["Market Value"] / tav * 100
 
@@ -135,27 +127,28 @@ if os.path.exists(PORTFOLIO_PATH):
     c5.metric("Total Cost Basis",           f"$ {tcb:,.2f}")
     c6.metric("Total Gain/Loss",            f"$ {tgl:+,.2f}", f"{tglp:+.2f}%")
 
-    # 📊 Position details
+    # 📊 Tabla
     st.markdown("## 📊 Equities - Position details")
-    base_cols = ["Symbol","Description","Quantity","Cost/Share","Price","Previous Close",
-                 "Day Change %","Day Change $","P/E","Market Value","Gain/Loss %","% of Acct"]
-
-    for missing in base_cols:
-        if missing not in df.columns:
-            df[missing] = None
+    base_cols = [
+        "Symbol","Description","Quantity","Cost/Share","Price","Previous Close",
+        "Day Change %","Day Change $","P/E","Market Value","Gain/Loss %","% of Acct"
+    ]
+    for col in base_cols:
+        if col not in df.columns:
+            df[col] = None
 
     styled = df[base_cols].style.map(
         highlight_positive_negative,
         subset=["Day Change %","Day Change $","Gain/Loss %"]
     )
-    num_cols = df[base_cols].select_dtypes("number").columns
     st.dataframe(
-        styled.format(format_eur_safe, subset=num_cols),
-        use_container_width=True, height=420
+        styled.format(format_eur_safe, subset=df.select_dtypes("number").columns),
+        use_container_width=True, height=450
     )
 
-    # 🟢 Top movers
+    # 🟢 Top Movers
     st.markdown("## 🟢 Top Movers")
+
     def show_table(sub_df, title):
         st.markdown(f"### {title}")
         renamed = sub_df.rename(columns={
@@ -164,9 +157,9 @@ if os.path.exists(PORTFOLIO_PATH):
             "Day Change %": "Price Chng %"
         })
         table_cols = ["Symbol","Description","Price","Mkt Val","Price Chng $","Price Chng %","Gain/Loss %","% of Acct"]
-        for c in table_cols:
-            if c not in renamed.columns:
-                renamed[c] = None
+        for col in table_cols:
+            if col not in renamed.columns:
+                renamed[col] = None
         styled_tbl = renamed[table_cols].style.map(
             highlight_positive_negative,
             subset=["Price Chng %","Price Chng $","Gain/Loss %"]
@@ -176,11 +169,9 @@ if os.path.exists(PORTFOLIO_PATH):
             use_container_width=True, height=360
         )
 
-    day_sorted = df.sort_values("Day Change $", ascending=False).copy()
-    show_table(day_sorted.head(10), "Top Gainers (Day)")
-    show_table(day_sorted.tail(10), "Top Losers (Day)")
+    sorted_day = df.sort_values("Day Change $", ascending=False)
+    show_table(sorted_day.head(10), "Top Gainers (Day)")
+    show_table(sorted_day.tail(10), "Top Losers (Day)")
 
 else:
-    st.error("No se encontraron los archivos requeridos en la carpeta Data (CSyRacional.csv).")
-    st.write("Verifica las rutas:")
-    st.code(f"PORTFOLIO_PATH = {PORTFOLIO_PATH}")
+    st.error("No se encontró el archivo CSyRacional.csv")
