@@ -66,7 +66,7 @@ def fetch_yahoo(symbols):
 def load_static(portfolio_path, cache_path):
     p_df = pd.read_csv(portfolio_path)
 
-    # ✅ Renombrar columnas según estructura real
+    # Renombrar columnas según estructura real
     rename_map = {
         "symbol": "Symbol",
         "description": "Description",
@@ -98,7 +98,7 @@ if os.path.exists(PORTFOLIO_PATH):
     yahoo_df = fetch_yahoo(static_df["Symbol"].tolist())
     df = pd.merge(static_df, yahoo_df, on="Symbol", how="left")
 
-    # Calcular dinámicos
+    # Calcular métricas dinámicas
     df["Market Value"] = df["Quantity"] * df["Price"]
     df["Cost Basis"]   = df["Quantity"] * df["Cost/Share"]
     df["Gain/Loss $"]  = df["Market Value"] - df["Cost Basis"]
@@ -113,7 +113,7 @@ if os.path.exists(PORTFOLIO_PATH):
     tglp = (tgl / tcb * 100) if tcb else 0
     tdc  = df["Day Change $"].sum()
     tdcp = (tdc / (tmv - tdc) * 100) if (tmv - tdc) else 0
-    cash = 2519.36  # hardcoded cash value
+    cash = 2519.36  # cash manual
     tav  = tmv + cash
     df["% of Acct"] = df["Market Value"] / tav * 100
 
@@ -141,8 +141,11 @@ if os.path.exists(PORTFOLIO_PATH):
         highlight_positive_negative,
         subset=["Day Change %","Day Change $","Gain/Loss %"]
     )
+
+    num_cols_in_styled = styled.data.select_dtypes("number").columns
+
     st.dataframe(
-        styled.format(format_eur_safe, subset=df.select_dtypes("number").columns),
+        styled.format(format_eur_safe, subset=num_cols_in_styled),
         use_container_width=True, height=450
     )
 
