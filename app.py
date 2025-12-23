@@ -303,6 +303,17 @@ df_sector = (
     .reset_index()
     .sort_values("Market Value", ascending=False)
 )
+df_sector = pd.concat(
+    [
+        df_sector,
+        pd.DataFrame(
+            [{"Sector": "Crypto", "Market Value": df_crypto["Market Value"].sum()}]
+        ),
+    ],
+    ignore_index=True,
+)
+df_sector = df_sector.groupby("Sector", as_index=False)["Market Value"].sum()
+df_sector = df_sector.sort_values("Market Value", ascending=False)
 
 fig = px.pie(
     df_sector,
