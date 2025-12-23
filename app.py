@@ -39,6 +39,24 @@ def format_usd_safe(x):
     except:
         return x
 
+def badge_html(value, label):
+    is_pos = value >= 0
+    arrow = "▲" if is_pos else "▼"
+    bg = "#E7F6EC" if is_pos else "#FDECEC"
+    fg = "#137333" if is_pos else "#B3261E"
+    return (
+        "<span style='"
+        "font-size:0.78em;"
+        "padding:2px 8px;"
+        "border-radius:999px;"
+        f"background:{bg};"
+        f"color:{fg};"
+        "font-weight:600;"
+        "margin-left:6px;"
+        "vertical-align:middle;"
+        f"'> {arrow} {value:+.2f}% {label}</span>"
+    )
+
 @st.cache_data(show_spinner="🪙 Cargando cripto…", ttl=300)
 def load_crypto_data():
     if not os.path.exists(CRYPTO_PATH):
@@ -257,9 +275,9 @@ eq_color_period = "green" if tglp >= 0 else "crimson"
 eq_color_day = "green" if tdc_eqp >= 0 else "crimson"
 st.markdown(
     "## 📊 Acciones y ETF "
-    f"<span>($ {tmv:,.2f})</span> "
-    f"<span style='color:{eq_color_period};'>({tglp:+.2f}% total)</span> "
-    f"<span style='color:{eq_color_day};'>({tdc_eqp:+.2f}% diario)</span>",
+    f"<span style='font-size:0.9em;color:#4B5563;'>$ {tmv:,.2f}</span>"
+    f"{badge_html(tglp, 'total')}"
+    f"{badge_html(tdc_eqp, 'diario')}",
     unsafe_allow_html=True,
 )
 table_cols = ["Symbol", "Description", "Quantity", "Cost/Share", "Price", "Previous Close", "Day Change %", "Day Change $", "P/E", "Market Value", "Gain/Loss %", "% of Acct"]
@@ -280,8 +298,8 @@ st.dataframe(styled.format(format_usd_safe, subset=num_cols), use_container_widt
 crypto_color_day = "green" if tdc_cp >= 0 else "crimson"
 st.markdown(
     "## 🪙 Cripto "
-    f"<span>($ {tcmv:,.2f})</span> "
-    f"<span style='color:{crypto_color_day};'>({tdc_cp:+.2f}% diario)</span>",
+    f"<span style='font-size:0.9em;color:#4B5563;'>$ {tcmv:,.2f}</span>"
+    f"{badge_html(tdc_cp, 'diario')}",
     unsafe_allow_html=True,
 )
 crypto_cols = [
