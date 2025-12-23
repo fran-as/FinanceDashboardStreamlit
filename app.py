@@ -36,6 +36,54 @@ def format_usd_safe(x):
     except:
         return x
 
+def load_cached_yahoo():
+    if not os.path.exists(CACHE_PATH):
+        return pd.DataFrame(
+            columns=[
+                "Symbol",
+                "Price",
+                "Previous Close",
+                "P/E",
+                "Description_yahoo",
+                "Sector",
+                "Updated",
+            ]
+        )
+
+    df = pd.read_csv(CACHE_PATH)
+    df.rename(
+        columns={
+            "Description": "Description_yahoo",
+            "Prev Close": "Previous Close",
+        },
+        inplace=True,
+    )
+    for col in [
+        "Symbol",
+        "Price",
+        "Previous Close",
+        "P/E",
+        "Description_yahoo",
+        "Sector",
+        "Updated",
+    ]:
+        if col not in df.columns:
+            df[col] = None
+    return df[
+        [
+            "Symbol",
+            "Price",
+            "Previous Close",
+            "P/E",
+            "Description_yahoo",
+            "Sector",
+            "Updated",
+        ]
+    ]
+
+def save_cached_yahoo(df_yahoo):
+    df_yahoo.to_csv(CACHE_PATH, index=False)
+
 @st.cache_data(show_spinner="📥 Cargando datos…")
 def load_static_data():
     df = pd.read_csv(PORTFOLIO_PATH)
@@ -48,30 +96,47 @@ def load_static_data():
     return df
 
 def fetch_yahoo_info(symbols):
+    cached = load_cached_yahoo()
+    if not cached.empty:
+        cached = cached.drop_duplicates(subset=["Symbol"], keep="last").set_index("Symbol", drop=False)
+
     data = []
     for sym in symbols:
+        cached_row = cached.loc[sym] if not cached.empty and sym in cached.index else None
         try:
             ticker = yf.Ticker(sym)
             hist = ticker.history(period="2d")
-            info = ticker.info
-            data.append({
+            info = ticker.info or {}
+            row = {
                 "Symbol": sym,
-                "Price": hist["Close"][-1] if len(hist) > 1 else None,
-                "Previous Close": hist["Close"][-2] if len(hist) > 1 else None,
+                "Price": hist["Close"].iloc[-1] if len(hist) >= 1 else None,
+                "Previous Close": hist["Close"].iloc[-2] if len(hist) >= 2 else None,
                 "P/E": info.get("trailingPE", None),
                 "Description_yahoo": info.get("longName", None),
-                "Sector": info.get("sector", "Unknown")
-            })
+                "Sector": info.get("sector", "Unknown"),
+                "Updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            }
+            if cached_row is not None:
+                for key in ["Price", "Previous Close", "P/E", "Description_yahoo", "Sector"]:
+                    if row[key] is None or (key == "Sector" and row[key] == "Unknown"):
+                        row[key] = cached_row.get(key)
+            data.append(row)
         except Exception:
-            data.append({
-                "Symbol": sym,
-                "Price": None,
-                "Previous Close": None,
-                "P/E": None,
-                "Description_yahoo": None,
-                "Sector": "Unknown"
-            })
-    return pd.DataFrame(data)
+            if cached_row is not None:
+                data.append(cached_row.to_dict())
+            else:
+                data.append({
+                    "Symbol": sym,
+                    "Price": None,
+                    "Previous Close": None,
+                    "P/E": None,
+                    "Description_yahoo": None,
+                    "Sector": "Unknown",
+                    "Updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                })
+    df_yahoo = pd.DataFrame(data)
+    save_cached_yahoo(df_yahoo)
+    return df_yahoo
 
 # --------- MAIN ---------
 df_static = load_static_data()
