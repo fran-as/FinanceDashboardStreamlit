@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import os
+import json
+import urllib.request
 from datetime import datetime
 from streamlit_autorefresh import st_autorefresh
 import plotly.express as px
@@ -11,6 +13,7 @@ st.set_page_config(layout="wide")
 # --------- RUTAS ---------
 PORTFOLIO_PATH = os.path.join("Data", "CSyRacional.csv")
 CACHE_PATH     = os.path.join("Data", "cached_data.csv")
+CRYPTO_PATH    = os.path.join("Data", "crypto_portfolio_quantities.csv")
 
 # --------- AUTOREFRESH CADA 5 MINUTOS ---------
 st_autorefresh(interval=5 * 60 * 1000, key="auto_refresh")
@@ -35,6 +38,65 @@ def format_usd_safe(x):
         return f"${x:,.2f}"
     except:
         return x
+
+@st.cache_data(show_spinner="🪙 Cargando cripto…", ttl=300)
+def load_crypto_data():
+    if not os.path.exists(CRYPTO_PATH):
+        return pd.DataFrame(columns=["Symbol", "Description", "Quantity"])
+    df = pd.read_csv(CRYPTO_PATH)
+    df.rename(
+        columns={
+            "symbol": "Symbol",
+            "description": "Description",
+            "total_quantity": "Quantity",
+        },
+        inplace=True,
+    )
+    for col in ["Symbol", "Description", "Quantity"]:
+        if col not in df.columns:
+            df[col] = None
+    return df[["Symbol", "Description", "Quantity"]]
+
+@st.cache_data(show_spinner="🪙 Consultando CoinGecko…", ttl=300)
+def fetch_coingecko_prices(symbols):
+    id_map = {
+        "BTC": "bitcoin",
+        "ETH": "ethereum",
+        "STETH": "staked-ether",
+        "WETH": "weth",
+        "UNI": "uniswap",
+        "LINK": "chainlink",
+        "DAI": "dai",
+        "DAI2": "dai",
+        "USDT": "tether",
+        "STMATIC": "staked-matic",
+    }
+    ids = [id_map.get(sym) for sym in symbols if id_map.get(sym)]
+    if not ids:
+        return pd.DataFrame(columns=["Symbol", "Price", "Day Change %"])
+
+    url = (
+        "https://api.coingecko.com/api/v3/simple/price"
+        f"?ids={','.join(sorted(set(ids)))}&vs_currencies=usd&include_24hr_change=true"
+    )
+    with urllib.request.urlopen(url, timeout=10) as resp:
+        payload = json.loads(resp.read().decode("utf-8"))
+
+    rows = []
+    for sym in symbols:
+        cg_id = id_map.get(sym)
+        if not cg_id:
+            rows.append({"Symbol": sym, "Price": None, "Day Change %": None})
+            continue
+        data = payload.get(cg_id, {})
+        rows.append(
+            {
+                "Symbol": sym,
+                "Price": data.get("usd"),
+                "Day Change %": data.get("usd_24h_change"),
+            }
+        )
+    return pd.DataFrame(rows)
 
 def load_cached_yahoo():
     if not os.path.exists(CACHE_PATH):
@@ -145,6 +207,14 @@ df_yahoo = fetch_yahoo_info(symbols)
 
 df = pd.merge(df_static, df_yahoo, on="Symbol", how="left")
 
+# --------- CRYPTO ---------
+df_crypto = load_crypto_data()
+crypto_symbols = df_crypto["Symbol"].dropna().unique().tolist()
+df_crypto_prices = fetch_coingecko_prices(crypto_symbols)
+df_crypto = pd.merge(df_crypto, df_crypto_prices, on="Symbol", how="left")
+df_crypto["Market Value"] = df_crypto["Quantity"] * df_crypto["Price"]
+df_crypto["Day Change $"] = df_crypto["Market Value"] * df_crypto["Day Change %"] / 100
+
 # Asegurar que Description no sea NaN
 df["Description"] = df["Description_yahoo"].combine_first(df["Description"])
 
@@ -159,11 +229,13 @@ df["Day Change $"] = df["Quantity"] * (df["Price"] - df["Previous Close"])
 # Totales
 cash = 2519.36  # efectivo manual
 tmv  = df["Market Value"].sum()
+tcmv = df_crypto["Market Value"].sum()
+tcd  = df_crypto["Day Change $"].sum()
 tcb  = df["Cost Basis"].sum()
 tgl  = df["Gain/Loss $"].sum()
-tav  = tmv + cash
-tdc  = df["Day Change $"].sum()
-tdcp = (tdc / (tmv - tdc) * 100) if (tmv - tdc) else 0
+tav  = tmv + tcmv + cash
+tdc  = df["Day Change $"].sum() + tcd
+tdcp = (tdc / ((tmv + tcmv) - tdc) * 100) if ((tmv + tcmv) - tdc) else 0
 tglp = (tgl / tcb * 100) if tcb else 0
 df["% of Acct"] = df["Market Value"] / tav * 100
 
@@ -172,7 +244,7 @@ st.markdown("## 💼 Account Summary")
 c1, c2, c3, c4, c5, c6 = st.columns(6)
 c1.metric("Total Accounts Value",       f"$ {tav:,.2f}")
 c2.metric("Total Cash & Cash Invest",   f"$ {cash:,.2f}")
-c3.metric("Total Market Value",         f"$ {tmv:,.2f}")
+c3.metric("Total Market Value",         f"$ {(tmv + tcmv):,.2f}")
 c4.metric("Total Day Change",           f"$ {tdc:+,.2f}", f"{tdcp:+.2f}%")
 c5.metric("Total Cost Basis",           f"$ {tcb:,.2f}")
 c6.metric("Total Gain/Loss",            f"$ {tgl:+,.2f}", f"{tglp:+.2f}%")
@@ -192,6 +264,36 @@ styled = df[table_cols].style.map(
 
 num_cols = df[table_cols].select_dtypes("number").columns
 st.dataframe(styled.format(format_usd_safe, subset=num_cols), use_container_width=True, height=420)
+
+# 🪙 Crypto
+st.markdown("## 🪙 Cripto")
+crypto_cols = [
+    "Symbol",
+    "Description",
+    "Quantity",
+    "Price",
+    "Day Change %",
+    "Day Change $",
+    "Market Value",
+]
+for col in crypto_cols:
+    if col not in df_crypto.columns:
+        df_crypto[col] = None
+
+crypto_styled = df_crypto[crypto_cols].style.map(
+    highlight_positive_negative,
+    subset=["Day Change %", "Day Change $"],
+)
+crypto_styled = crypto_styled.format(
+    {
+        "Quantity": "{:,.6f}",
+        "Price": "${:,.2f}",
+        "Day Change %": "{:+.2f}%",
+        "Day Change $": "${:+,.2f}",
+        "Market Value": "${:,.2f}",
+    }
+)
+st.dataframe(crypto_styled, use_container_width=True, height=320)
 
 # 📈 Pie chart por sector
 st.markdown("## 🧭 Exposición por Sector")
