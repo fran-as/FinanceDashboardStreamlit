@@ -257,6 +257,7 @@ eq_color_period = "green" if tglp >= 0 else "crimson"
 eq_color_day = "green" if tdc_eqp >= 0 else "crimson"
 st.markdown(
     "## 📊 Acciones y ETF "
+    f"<span>($ {tmv:,.2f})</span> "
     f"<span style='color:{eq_color_period};'>({tglp:+.2f}% total)</span> "
     f"<span style='color:{eq_color_day};'>({tdc_eqp:+.2f}% diario)</span>",
     unsafe_allow_html=True,
@@ -279,6 +280,7 @@ st.dataframe(styled.format(format_usd_safe, subset=num_cols), use_container_widt
 crypto_color_day = "green" if tdc_cp >= 0 else "crimson"
 st.markdown(
     "## 🪙 Cripto "
+    f"<span>($ {tcmv:,.2f})</span> "
     f"<span style='color:{crypto_color_day};'>({tdc_cp:+.2f}% diario)</span>",
     unsafe_allow_html=True,
 )
