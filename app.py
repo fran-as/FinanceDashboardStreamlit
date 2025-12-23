@@ -305,7 +305,7 @@ eq_format = {
     "Gain/Loss %": "{:+.2f}%",
     "% of Acct": "{:.2f}%",
 }
-st.dataframe(styled.format(eq_format), use_container_width=True, height=420)
+st.dataframe(styled.format(eq_format), use_container_width=True, height=420, hide_index=True)
 
 # 🪙 Crypto
 crypto_color_day = "green" if tdc_cp >= 0 else "crimson"
@@ -343,7 +343,7 @@ crypto_styled = crypto_styled.format(
         "Market Value": "${:,.2f}",
     }
 )
-st.dataframe(crypto_styled, use_container_width=True, height=320)
+st.dataframe(crypto_styled, use_container_width=True, height=320, hide_index=True)
 
 # 📈 Pie chart por sector
 st.markdown("## 🧭 Exposición por Sector")
