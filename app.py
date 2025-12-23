@@ -234,9 +234,12 @@ tcd  = df_crypto["Day Change $"].sum()
 tcb  = df["Cost Basis"].sum()
 tgl  = df["Gain/Loss $"].sum()
 tav  = tmv + tcmv + cash
-tdc  = df["Day Change $"].sum() + tcd
+tdc_eq = df["Day Change $"].sum()
+tdc  = tdc_eq + tcd
 tdcp = (tdc / ((tmv + tcmv) - tdc) * 100) if ((tmv + tcmv) - tdc) else 0
 tglp = (tgl / tcb * 100) if tcb else 0
+tdc_eqp = (tdc_eq / (tmv - tdc_eq) * 100) if (tmv - tdc_eq) else 0
+tdc_cp = (tcd / (tcmv - tcd) * 100) if (tcmv - tcd) else 0
 df["% of Acct"] = df["Market Value"] / tav * 100
 
 # 💼 Account Summary
@@ -250,7 +253,14 @@ c5.metric("Total Cost Basis",           f"$ {tcb:,.2f}")
 c6.metric("Total Gain/Loss",            f"$ {tgl:+,.2f}", f"{tglp:+.2f}%")
 
 # 📊 Tabla
-st.markdown("## 📊 Posiciones")
+eq_color_period = "green" if tglp >= 0 else "crimson"
+eq_color_day = "green" if tdc_eqp >= 0 else "crimson"
+st.markdown(
+    "## 📊 Acciones y ETF "
+    f"<span style='color:{eq_color_period};'>({tglp:+.2f}% total)</span> "
+    f"<span style='color:{eq_color_day};'>({tdc_eqp:+.2f}% diario)</span>",
+    unsafe_allow_html=True,
+)
 table_cols = ["Symbol", "Description", "Quantity", "Cost/Share", "Price", "Previous Close", "Day Change %", "Day Change $", "P/E", "Market Value", "Gain/Loss %", "% of Acct"]
 
 for col in table_cols:
@@ -266,7 +276,12 @@ num_cols = df[table_cols].select_dtypes("number").columns
 st.dataframe(styled.format(format_usd_safe, subset=num_cols), use_container_width=True, height=420)
 
 # 🪙 Crypto
-st.markdown("## 🪙 Cripto")
+crypto_color_day = "green" if tdc_cp >= 0 else "crimson"
+st.markdown(
+    "## 🪙 Cripto "
+    f"<span style='color:{crypto_color_day};'>({tdc_cp:+.2f}% diario)</span>",
+    unsafe_allow_html=True,
+)
 crypto_cols = [
     "Symbol",
     "Description",
