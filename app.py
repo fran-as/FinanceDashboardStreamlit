@@ -293,8 +293,19 @@ styled = df[table_cols].style.map(
     subset=["Day Change %", "Day Change $", "Gain/Loss %"]
 )
 
-num_cols = df[table_cols].select_dtypes("number").columns
-st.dataframe(styled.format(format_usd_safe, subset=num_cols), use_container_width=True, height=420)
+eq_format = {
+    "Quantity": "{:,.4f}",
+    "Cost/Share": "${:,.2f}",
+    "Price": "${:,.2f}",
+    "Previous Close": "${:,.2f}",
+    "Day Change %": "{:+.2f}%",
+    "Day Change $": "${:+,.2f}",
+    "P/E": "{:,.2f}",
+    "Market Value": "${:,.2f}",
+    "Gain/Loss %": "{:+.2f}%",
+    "% of Acct": "{:.2f}%",
+}
+st.dataframe(styled.format(eq_format), use_container_width=True, height=420)
 
 # 🪙 Crypto
 crypto_color_day = "green" if tdc_cp >= 0 else "crimson"
