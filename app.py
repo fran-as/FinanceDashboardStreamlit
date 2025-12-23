@@ -4,6 +4,7 @@ import yfinance as yf
 import os
 from datetime import datetime
 from streamlit_autorefresh import st_autorefresh
+import plotly.express as px
 
 st.set_page_config(layout="wide")
 
@@ -11,13 +12,13 @@ st.set_page_config(layout="wide")
 PORTFOLIO_PATH = os.path.join("Data", "CSyRacional.csv")
 CACHE_PATH     = os.path.join("Data", "cached_data.csv")
 
-# --------- AUTOREFRESH CADA 5 MIN ---------
+# --------- AUTOREFRESH CADA 5 MINUTOS ---------
 st_autorefresh(interval=5 * 60 * 1000, key="auto_refresh")
 
 st.title("📈 Finance Dashboard")
 st.caption(f"Última actualización: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
-# --------- HELPERS VISUALES ---------
+# --------- HELPERS ---------
 def highlight_positive_negative(val):
     try:
         v = float(val)
@@ -31,162 +32,116 @@ def highlight_positive_negative(val):
 
 def format_usd_safe(x):
     try:
-        return f"{x:,.2f}"
-    except Exception:
+        return f"${x:,.2f}"
+    except:
         return x
 
-# --------- YAHOO FINANCE ---------
-@st.cache_data(show_spinner="📡 Consultando Yahoo Finance...")
-def fetch_yahoo(symbols):
-    rows = []
-    for sym in symbols:
-        try:
-            tkr = yf.Ticker(sym)
-            hist = tkr.history(period="2d")
-            price = hist["Close"][-1]
-            prev  = hist["Close"][-2]
-            pe    = tkr.info.get("trailingPE", None)
-            desc  = tkr.info.get("longName", None)
-        except Exception:
-            price = None
-            prev  = None
-            pe    = None
-            desc  = None
-        rows.append({
-            "Symbol": sym,
-            "Price": price,
-            "Previous Close": prev,
-            "P/E": pe,
-            "Description_y": desc
-        })
-    return pd.DataFrame(rows)
-
-# --------- CARGA ESTÁTICA Y MERGE ---------
-@st.cache_data(show_spinner="📥 Cargando datos estáticos…")
-def load_static(portfolio_path, cache_path):
-    p_df = pd.read_csv(portfolio_path)
-
-    # Renombrar columnas según flujo del app
-    rename_map = {
+@st.cache_data(show_spinner="📥 Cargando datos…")
+def load_static_data():
+    df = pd.read_csv(PORTFOLIO_PATH)
+    df.rename(columns={
         "symbol": "Symbol",
         "description": "Description",
         "total_quantity": "Quantity",
         "avg_cost_per_share": "Cost/Share"
-    }
-    p_df = p_df.rename(columns=rename_map)
+    }, inplace=True)
+    return df
 
-    # Asegurar columnas mínimas
-    for col in ["Symbol", "Description", "Quantity", "Cost/Share"]:
-        if col not in p_df.columns:
-            p_df[col] = None
-
-    # Tipos y limpieza
-    p_df["Symbol"]      = p_df["Symbol"].astype(str).str.strip().str.upper()
-    p_df["Description"] = p_df["Description"].astype(str).str.strip()
-    p_df["Quantity"]    = pd.to_numeric(p_df["Quantity"], errors="coerce")
-    p_df["Cost/Share"]  = pd.to_numeric(p_df["Cost/Share"], errors="coerce")
-
-    # Leer cache si existe
-    try:
-        c_df = pd.read_csv(cache_path)
-    except FileNotFoundError:
-        c_df = pd.DataFrame(columns=["Symbol"])
-
-    if "symbol" in c_df.columns and "Symbol" not in c_df.columns:
-        c_df = c_df.rename(columns={"symbol": "Symbol"})
-
-    if "Symbol" in c_df.columns:
-        c_df["Symbol"] = c_df["Symbol"].astype(str).str.strip().str.upper()
-
-    # Evitar duplicar precios (vendrán actualizados)
-    c_df = c_df.drop(columns=["Price", "Previous Close"], errors="ignore")
-
-    # Merge con cache (puede incluir P/E, sector, etc.)
-    return pd.merge(p_df, c_df, on="Symbol", how="left")
+def fetch_yahoo_info(symbols):
+    data = []
+    for sym in symbols:
+        try:
+            ticker = yf.Ticker(sym)
+            hist = ticker.history(period="2d")
+            info = ticker.info
+            data.append({
+                "Symbol": sym,
+                "Price": hist["Close"][-1] if len(hist) > 1 else None,
+                "Previous Close": hist["Close"][-2] if len(hist) > 1 else None,
+                "P/E": info.get("trailingPE", None),
+                "Description_yahoo": info.get("longName", None),
+                "Sector": info.get("sector", "Unknown")
+            })
+        except Exception:
+            data.append({
+                "Symbol": sym,
+                "Price": None,
+                "Previous Close": None,
+                "P/E": None,
+                "Description_yahoo": None,
+                "Sector": "Unknown"
+            })
+    return pd.DataFrame(data)
 
 # --------- MAIN ---------
-if os.path.exists(PORTFOLIO_PATH):
-    static_df = load_static(PORTFOLIO_PATH, CACHE_PATH)
-    yahoo_df  = fetch_yahoo(static_df["Symbol"].unique().tolist())
+df_static = load_static_data()
+symbols = df_static["Symbol"].dropna().unique().tolist()
+df_yahoo = fetch_yahoo_info(symbols)
 
-    # Combinar precios y descripción
-    df = pd.merge(static_df, yahoo_df, on="Symbol", how="left")
-    if "Description_y" in df.columns:
-        df["Description"] = df["Description_y"].combine_first(df["Description"])
-        df = df.drop(columns=["Description_y"], errors="ignore")
+df = pd.merge(df_static, df_yahoo, on="Symbol", how="left")
 
-    # Cálculos dinámicos
-    df["Market Value"] = df["Quantity"] * df["Price"]
-    df["Cost Basis"]   = df["Quantity"] * df["Cost/Share"]
-    df["Gain/Loss $"]  = df["Market Value"] - df["Cost Basis"]
-    df["Gain/Loss %"]  = df["Gain/Loss $"] / df["Cost Basis"] * 100
-    df["Day Change %"] = (df["Price"] - df["Previous Close"]) / df["Previous Close"] * 100
-    df["Day Change $"] = df["Quantity"] * (df["Price"] - df["Previous Close"])
+# Asegurar que Description no sea NaN
+df["Description"] = df["Description_yahoo"].combine_first(df["Description"])
 
-    # Totales y % de cuenta
-    tmv  = df["Market Value"].sum()
-    tcb  = df["Cost Basis"].sum()
-    tgl  = df["Gain/Loss $"].sum()
-    tglp = (tgl / tcb * 100) if tcb else 0
-    tdc  = df["Day Change $"].sum()
-    tdcp = (tdc / (tmv - tdc) * 100) if (tmv - tdc) else 0
-    cash = 2519.36
-    tav  = tmv + cash
-    df["% of Acct"] = df["Market Value"] / tav * 100
+# Cálculos financieros
+df["Market Value"] = df["Quantity"] * df["Price"]
+df["Cost Basis"]   = df["Quantity"] * df["Cost/Share"]
+df["Gain/Loss $"]  = df["Market Value"] - df["Cost Basis"]
+df["Gain/Loss %"]  = df["Gain/Loss $"] / df["Cost Basis"] * 100
+df["Day Change %"] = (df["Price"] - df["Previous Close"]) / df["Previous Close"] * 100
+df["Day Change $"] = df["Quantity"] * (df["Price"] - df["Previous Close"])
 
-    # 💼 Account Summary
-    st.markdown("## 💼 Account Summary")
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
-    c1.metric("Total Accounts Value",       f"$ {tav:,.2f}")
-    c2.metric("Total Cash & Cash Invest",   f"$ {cash:,.2f}")
-    c3.metric("Total Market Value",         f"$ {tmv:,.2f}")
-    c4.metric("Total Day Change",           f"$ {tdc:+,.2f}", f"{tdcp:+.2f}%")
-    c5.metric("Total Cost Basis",           f"$ {tcb:,.2f}")
-    c6.metric("Total Gain/Loss",            f"$ {tgl:+,.2f}", f"{tglp:+.2f}%")
+# Totales
+cash = 2519.36  # efectivo manual
+tmv  = df["Market Value"].sum()
+tcb  = df["Cost Basis"].sum()
+tgl  = df["Gain/Loss $"].sum()
+tav  = tmv + cash
+tdc  = df["Day Change $"].sum()
+tdcp = (tdc / (tmv - tdc) * 100) if (tmv - tdc) else 0
+tglp = (tgl / tcb * 100) if tcb else 0
+df["% of Acct"] = df["Market Value"] / tav * 100
 
-    # 📊 Tabla principal
-    st.markdown("## 📊 Equities - Position details")
-    base_cols = ["Symbol","Description","Quantity","Cost/Share","Price","Previous Close",
-                 "Day Change %","Day Change $","P/E","Market Value","Gain/Loss %","% of Acct"]
+# 💼 Account Summary
+st.markdown("## 💼 Account Summary")
+c1, c2, c3, c4, c5, c6 = st.columns(6)
+c1.metric("Total Accounts Value",       f"$ {tav:,.2f}")
+c2.metric("Total Cash & Cash Invest",   f"$ {cash:,.2f}")
+c3.metric("Total Market Value",         f"$ {tmv:,.2f}")
+c4.metric("Total Day Change",           f"$ {tdc:+,.2f}", f"{tdcp:+.2f}%")
+c5.metric("Total Cost Basis",           f"$ {tcb:,.2f}")
+c6.metric("Total Gain/Loss",            f"$ {tgl:+,.2f}", f"{tglp:+.2f}%")
 
-    for missing in base_cols:
-        if missing not in df.columns:
-            df[missing] = None
+# 📊 Tabla
+st.markdown("## 📊 Posiciones")
+table_cols = ["Symbol", "Description", "Quantity", "Cost/Share", "Price", "Previous Close", "Day Change %", "Day Change $", "P/E", "Market Value", "Gain/Loss %", "% of Acct"]
 
-    styled = df[base_cols].style.map(
-        highlight_positive_negative,
-        subset=["Day Change %","Day Change $","Gain/Loss %"]
-    )
-    st.dataframe(
-        styled.format(format_usd_safe, subset=df.select_dtypes("number").columns),
-        use_container_width=True, height=420
-    )
+for col in table_cols:
+    if col not in df.columns:
+        df[col] = None
 
-    # 🟢 Top Movers
-    st.markdown("## 🟢 Top Movers")
-    def show_table(sub_df, title):
-        st.markdown(f"### {title}")
-        renamed = sub_df.rename(columns={
-            "Market Value": "Mkt Val",
-            "Day Change $": "Price Chng $",
-            "Day Change %": "Price Chng %"
-        })
-        table_cols = ["Symbol","Description","Price","Mkt Val","Price Chng $","Price Chng %","Gain/Loss %","% of Acct"]
-        for c in table_cols:
-            if c not in renamed.columns:
-                renamed[c] = None
-        styled_tbl = renamed[table_cols].style.map(
-            highlight_positive_negative,
-            subset=["Price Chng %","Price Chng $","Gain/Loss %"]
-        )
-        st.dataframe(
-            styled_tbl.format(format_usd_safe, subset=table_cols[2:]),
-            use_container_width=True, height=360
-        )
+styled = df[table_cols].style.map(
+    highlight_positive_negative,
+    subset=["Day Change %", "Day Change $", "Gain/Loss %"]
+)
 
-    day_sorted = df.sort_values("Day Change $", ascending=False).copy()
-    show_table(day_sorted.head(10), "Top Gainers (Day)")
-    show_table(day_sorted.tail(10), "Top Losers (Day)")
+num_cols = df[table_cols].select_dtypes("number").columns
+st.dataframe(styled.format(format_usd_safe, subset=num_cols), use_container_width=True, height=420)
 
-else:
-    st.error("No se encontró el archivo CSyRacional.csv.")
+# 📈 Pie chart por sector
+st.markdown("## 🧭 Exposición por Sector")
+df_sector = (
+    df.groupby("Sector")["Market Value"]
+    .sum()
+    .reset_index()
+    .sort_values("Market Value", ascending=False)
+)
+
+fig = px.pie(
+    df_sector,
+    values="Market Value",
+    names="Sector",
+    title="Distribución por Sector",
+    hole=0.4
+)
+st.plotly_chart(fig, use_container_width=True)
