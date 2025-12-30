@@ -245,7 +245,7 @@ df["Day Change %"] = (df["Price"] - df["Previous Close"]) / df["Previous Close"]
 df["Day Change $"] = df["Quantity"] * (df["Price"] - df["Previous Close"])
 
 # Totales
-cash = 2519.36  # efectivo manual
+cash = 691.35  # efectivo manual
 tmv  = df["Market Value"].sum()
 tcmv = df_crypto["Market Value"].sum()
 tcd  = df_crypto["Day Change $"].sum()
